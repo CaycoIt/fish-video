@@ -1,0 +1,30 @@
+# Build output
+build/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Package.resolved
+
+# iconset (intermediate, icns is the final product)
+*.iconset/
+
+# IDE
+*.iml
+.idea/
+.vscode/
+
+# DMG (generated, not source)
+*.dmg
