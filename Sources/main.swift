@@ -8,6 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow?
     var contentController: ContentViewController?
     private var isTransparentBg = false
+    private var isPickingCustomColor = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         contentController = ContentViewController()
@@ -69,6 +70,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(NSMenuItem(title: "Reset Transparency", action: #selector(resetTransparency), keyEquivalent: "0"))
         viewMenu.addItem(NSMenuItem.separator())
         viewMenu.addItem(NSMenuItem(title: "Transparent Background", action: #selector(toggleTransparentBackground), keyEquivalent: "b"))
+        viewMenu.addItem(NSMenuItem.separator())
+        // Theme submenu
+        let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+        let themeMenu = NSMenu(title: "Theme")
+        themeMenu.addItem(NSMenuItem(title: "Dark", action: #selector(setDarkTheme), keyEquivalent: "d"))
+        themeMenu.addItem(NSMenuItem(title: "Light", action: #selector(setLightTheme), keyEquivalent: "l"))
+        themeMenu.addItem(NSMenuItem.separator())
+        themeMenu.addItem(NSMenuItem(title: "Custom Color...", action: #selector(showColorPicker), keyEquivalent: "c"))
+        themeItem.submenu = themeMenu
+        themeItem.keyEquivalentModifierMask = [.command, .shift]
+        for item in themeMenu.items {
+            item.keyEquivalentModifierMask = [.command, .shift]
+        }
+        viewMenu.addItem(themeItem)
         viewMenuItem.submenu = viewMenu
         mainMenu.addItem(viewMenuItem)
 
@@ -164,6 +179,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         contentController?.setTransparentBackground(isTransparentBg)
+    }
+
+    // MARK: - Theme
+
+    @objc func setDarkTheme() {
+        applyTheme(.dark)
+    }
+
+    @objc func setLightTheme() {
+        applyTheme(.light)
+    }
+
+    @objc func showColorPicker() {
+        isPickingCustomColor = true
+        let panel = NSColorPanel.shared
+        panel.showsAlpha = false
+        panel.makeKeyAndOrderFront(nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(colorPanelClosed), name: NSWindow.willCloseNotification, object: panel)
+    }
+
+    @objc func colorPanelClosed() {
+        isPickingCustomColor = false
+        NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: NSColorPanel.shared)
+    }
+
+    @objc func changeColor(_ sender: Any?) {
+        guard isPickingCustomColor else { return }
+        let color = NSColorPanel.shared.color.usingColorSpace(.sRGB) ?? .black
+        if !isTransparentBg {
+            window?.backgroundColor = color
+        }
+        applyTheme(.custom(color: color))
+    }
+
+    private func applyTheme(_ theme: PlayerTheme) {
+        window?.appearance = NSAppearance(named: theme.isDark ? .darkAqua : .aqua)
+        if !isTransparentBg {
+            window?.backgroundColor = theme.isDark ? NSColor.black : NSColor.white
+        }
+        contentController?.applyTheme(theme)
     }
 }
 

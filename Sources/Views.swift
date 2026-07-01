@@ -2,6 +2,56 @@ import AppKit
 import AVKit
 import AVFoundation
 
+// MARK: - PlayerTheme
+
+struct PlayerTheme {
+    let sidebarBg: NSColor
+    let playerBg: NSColor
+    let bottomBarBg: NSColor
+    let primaryText: NSColor
+    let secondaryText: NSColor
+    let dimText: NSColor
+    let accentText: NSColor
+    let isDark: Bool
+
+    static let dark = PlayerTheme(
+        sidebarBg: NSColor(srgbRed: 0.11, green: 0.11, blue: 0.12, alpha: 1.0),
+        playerBg: NSColor.black,
+        bottomBarBg: NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 0.95),
+        primaryText: NSColor.white,
+        secondaryText: NSColor.white.withAlphaComponent(0.7),
+        dimText: NSColor.white.withAlphaComponent(0.4),
+        accentText: NSColor.systemBlue,
+        isDark: true
+    )
+
+    static let light = PlayerTheme(
+        sidebarBg: NSColor(srgbRed: 0.93, green: 0.93, blue: 0.95, alpha: 1.0),
+        playerBg: NSColor(srgbRed: 0.88, green: 0.88, blue: 0.9, alpha: 1.0),
+        bottomBarBg: NSColor(srgbRed: 0.95, green: 0.95, blue: 0.97, alpha: 0.95),
+        primaryText: NSColor.black,
+        secondaryText: NSColor.black.withAlphaComponent(0.65),
+        dimText: NSColor.black.withAlphaComponent(0.4),
+        accentText: NSColor.systemBlue,
+        isDark: false
+    )
+
+    static func custom(color: NSColor) -> PlayerTheme {
+        let luminance = 0.299 * color.redComponent + 0.587 * color.greenComponent + 0.114 * color.blueComponent
+        let isDark = luminance < 0.5
+        return PlayerTheme(
+            sidebarBg: color,
+            playerBg: color,
+            bottomBarBg: color.withAlphaComponent(0.95),
+            primaryText: isDark ? NSColor.white : NSColor.black,
+            secondaryText: isDark ? NSColor.white.withAlphaComponent(0.7) : NSColor.black.withAlphaComponent(0.65),
+            dimText: isDark ? NSColor.white.withAlphaComponent(0.4) : NSColor.black.withAlphaComponent(0.4),
+            accentText: NSColor.systemBlue,
+            isDark: isDark
+        )
+    }
+}
+
 // MARK: - ContentViewController (Split View: Playlist + Player)
 
 class ContentViewController: NSSplitViewController {
@@ -109,6 +159,13 @@ class ContentViewController: NSSplitViewController {
     func updateAlphaLabel(_ value: CGFloat) {
         playerVC.updateAlphaLabel(value)
     }
+
+    // MARK: - Theme
+
+    func applyTheme(_ theme: PlayerTheme) {
+        playlistVC.applyTheme(theme)
+        playerVC.applyTheme(theme)
+    }
 }
 
 // MARK: - PlaylistViewController
@@ -129,13 +186,12 @@ class PlaylistViewController: NSViewController {
         "mpg", "mpeg", "ts", "m2ts", "vob", "3gp", "rm", "rmvb"
     ]
 
-    private let darkBg = NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 1.0)
-    private let sidebarBg = NSColor(srgbRed: 0.11, green: 0.11, blue: 0.12, alpha: 1.0)
+    private var currentTheme: PlayerTheme = .dark
 
     override func loadView() {
         let view = NSView()
         view.wantsLayer = true
-        view.layer?.backgroundColor = sidebarBg.cgColor
+        view.layer?.backgroundColor = currentTheme.sidebarBg.cgColor
 
         // Header container
         let headerView = NSView()
@@ -302,11 +358,25 @@ class PlaylistViewController: NSViewController {
     // MARK: - Transparent Background
 
     func setTransparentBackground(_ enabled: Bool) {
+        isTransparentBgActive = enabled
         if enabled {
-            view.layer?.backgroundColor = NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 0.75).cgColor
+            view.layer?.backgroundColor = currentTheme.sidebarBg.withAlphaComponent(0.75).cgColor
         } else {
-            view.layer?.backgroundColor = sidebarBg.cgColor
+            view.layer?.backgroundColor = currentTheme.sidebarBg.cgColor
         }
+    }
+
+    private var isTransparentBgActive = false
+
+    // MARK: - Theme
+
+    func applyTheme(_ theme: PlayerTheme) {
+        currentTheme = theme
+        titleLabel.textColor = theme.primaryText.withAlphaComponent(0.9)
+        if !isTransparentBgActive {
+            view.layer?.backgroundColor = theme.sidebarBg.cgColor
+        }
+        tableView.reloadData()
     }
 }
 
@@ -326,7 +396,7 @@ extension PlaylistViewController: NSTableViewDataSource, NSTableViewDelegate {
 
         let filename = files[row].lastPathComponent
         let isCurrent = (row == currentIndex)
-        cell.configure(index: row + 1, filename: filename, isCurrent: isCurrent)
+        cell.configure(index: row + 1, filename: filename, isCurrent: isCurrent, theme: currentTheme)
 
         return cell
     }
@@ -413,7 +483,7 @@ class PlaylistCellView: NSTableCellView {
         ])
     }
 
-    func configure(index: Int, filename: String, isCurrent: Bool) {
+    func configure(index: Int, filename: String, isCurrent: Bool, theme: PlayerTheme) {
         indexLabel.stringValue = String(format: "%02d", index)
         nameLabel.stringValue = filename
 
@@ -421,15 +491,16 @@ class PlaylistCellView: NSTableCellView {
             bgView.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
             bgView.layer?.borderWidth = 1
             bgView.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.4).cgColor
-            nameLabel.textColor = NSColor.white
+            nameLabel.textColor = theme.primaryText
             nameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
             indexLabel.isHidden = true
             playIcon.isHidden = false
         } else {
             bgView.layer?.backgroundColor = NSColor.clear.cgColor
             bgView.layer?.borderWidth = 0
-            nameLabel.textColor = NSColor.white.withAlphaComponent(0.6)
+            nameLabel.textColor = theme.secondaryText
             nameLabel.font = .systemFont(ofSize: 12)
+            indexLabel.textColor = theme.dimText
             indexLabel.isHidden = false
             playIcon.isHidden = true
         }
@@ -455,13 +526,15 @@ class PlayerViewController: NSViewController {
     private var currentRate: Float = 1.0
     private var timeObserver: Any?
     private var isUserSeeking = false
+    private var currentTheme: PlayerTheme = .dark
+    private var isTransparentBgActive = false
 
     private let speedSteps: [Double] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
 
     override func loadView() {
         let view = NSView()
         view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.black.cgColor
+        view.layer?.backgroundColor = currentTheme.playerBg.cgColor
 
         // AVPlayerView
         playerView = AVPlayerView()
@@ -473,7 +546,7 @@ class PlayerViewController: NSViewController {
         // Bottom control bar
         bottomBar = NSView()
         bottomBar.wantsLayer = true
-        bottomBar.layer?.backgroundColor = NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 0.95).cgColor
+        bottomBar.layer?.backgroundColor = currentTheme.bottomBarBg.cgColor
         bottomBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(bottomBar)
 
@@ -813,10 +886,35 @@ class PlayerViewController: NSViewController {
     // MARK: - Transparent Background
 
     func setTransparentBackground(_ enabled: Bool) {
+        isTransparentBgActive = enabled
         if enabled {
             view.layer?.backgroundColor = NSColor.clear.cgColor
         } else {
-            view.layer?.backgroundColor = NSColor.black.cgColor
+            view.layer?.backgroundColor = currentTheme.playerBg.cgColor
+        }
+    }
+
+    // MARK: - Theme
+
+    func applyTheme(_ theme: PlayerTheme) {
+        currentTheme = theme
+        if !isTransparentBgActive {
+            view.layer?.backgroundColor = theme.playerBg.cgColor
+        }
+        bottomBar.layer?.backgroundColor = theme.bottomBarBg.cgColor
+        speedLabel.textColor = theme.accentText
+        alphaLabel.textColor = theme.dimText
+        timeLabel.textColor = theme.secondaryText
+        for subview in bottomBar.subviews {
+            guard let button = subview as? NSButton else { continue }
+            let id = button.identifier?.rawValue
+            if id == "playButton" {
+                button.contentTintColor = theme.primaryText
+            } else if id == "pinButton" {
+                updatePinButton()
+            } else {
+                button.contentTintColor = theme.secondaryText
+            }
         }
     }
 }
