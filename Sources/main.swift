@@ -26,7 +26,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window?.appearance = NSAppearance(named: .darkAqua)
         window?.contentViewController = contentController
         window?.center()
-        window?.minSize = NSSize(width: 600, height: 400)
+        window?.minSize = NSSize(width: 640, height: 400)
         window?.makeKeyAndOrderFront(nil)
         window?.alphaValue = 1.0
         window?.isMovableByWindowBackground = true
@@ -90,7 +90,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Playback menu
         let playbackMenuItem = NSMenuItem()
         let playbackMenu = NSMenu(title: "Playback")
-        playbackMenu.addItem(NSMenuItem(title: "Play/Pause", action: #selector(ContentViewController.togglePlayPause), keyEquivalent: " "))
+        let playPauseItem = NSMenuItem(title: "Play/Pause", action: #selector(ContentViewController.togglePlayPause), keyEquivalent: " ")
+        playPauseItem.keyEquivalentModifierMask = []
+        playbackMenu.addItem(playPauseItem)
         playbackMenu.addItem(NSMenuItem(title: "Next", action: #selector(ContentViewController.playNext), keyEquivalent: "\u{2192}"))
         playbackMenu.addItem(NSMenuItem(title: "Previous", action: #selector(ContentViewController.playPrevious), keyEquivalent: "\u{2190}"))
         playbackMenu.addItem(NSMenuItem.separator())
@@ -170,7 +172,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if isTransparentBg {
             window.isOpaque = false
-            window.backgroundColor = .clear
+            // 极低 alpha 保证鼠标事件不穿透（分割线拖拽正常），肉眼几乎无感知
+            window.backgroundColor = NSColor(white: 0, alpha: 0.01)
             window.hasShadow = false
         } else {
             window.isOpaque = true
@@ -219,6 +222,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window?.backgroundColor = theme.isDark ? NSColor.black : NSColor.white
         }
         contentController?.applyTheme(theme)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        contentController?.savePlaybackPosition()
     }
 }
 

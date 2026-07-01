@@ -71,13 +71,14 @@ class ContentViewController: NSSplitViewController {
         super.viewDidLoad()
 
         let playlistItem = NSSplitViewItem(viewController: playlistVC)
-        playlistItem.canCollapse = true
+        playlistItem.canCollapse = false
         playlistItem.preferredThicknessFraction = 0.22
         playlistItem.minimumThickness = 160
         playlistItem.maximumThickness = 800
         playlistItem.holdingPriority = .init(260)
 
         let playerItem = NSSplitViewItem(viewController: playerVC)
+        playerItem.minimumThickness = 380
         playerItem.holdingPriority = .init(250)
 
         addSplitViewItem(playlistItem)
@@ -168,6 +169,10 @@ class ContentViewController: NSSplitViewController {
 
     func syncPinButton() {
         playerVC.syncPinState()
+    }
+
+    func savePlaybackPosition() {
+        playerVC.savePlaybackPosition()
     }
 
     func updateAlphaLabel(_ value: CGFloat) {
@@ -623,8 +628,19 @@ class PlayerViewController: NSViewController {
     private var isUserSeeking = false
     private var currentTheme: PlayerTheme = .dark
     private var isTransparentBgActive = false
+    private var keyMonitor: Any?
+    private var currentVideoURL: URL?
+    private var statusObservation: NSKeyValueObservation?
+    private var autoSaveCounter = 0
 
     private let speedSteps: [Double] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0]
+
+    deinit {
+        if let keyMonitor = keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+        }
+        savePlaybackPosition()
+    }
 
     override func loadView() {
         let view = NSView()
@@ -778,11 +794,16 @@ class PlayerViewController: NSViewController {
         ])
 
         self.view = view
+
+        startKeyMonitor()
     }
 
     // MARK: - Playback
 
     func play(url: URL) {
+        // 保存上一个视频的播放进度
+        savePlaybackPosition()
+
         // Remove old time observer
         if let observer = timeObserver {
             player?.removeTimeObserver(observer)
@@ -791,6 +812,7 @@ class PlayerViewController: NSViewController {
         let item = AVPlayerItem(url: url)
         player = AVPlayer(playerItem: item)
         playerView.player = player
+        currentVideoURL = url
 
         // Observe end of video for auto-advance
         NotificationCenter.default.addObserver(
@@ -804,12 +826,21 @@ class PlayerViewController: NSViewController {
         player?.rate = currentRate
         updatePlayButton()
 
-        // Periodic time observer for time label
+        // 恢复播放进度（用 KVO 等播放器就绪）
+        restorePlaybackPosition(for: url, item: item)
+
+        // Periodic time observer for time label + auto save
         timeObserver = player?.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
             queue: .main
         ) { [weak self] _ in
             self?.updateTimeLabel()
+            // 每 5 秒自动保存一次进度（10 ticks × 0.5s）
+            self?.autoSaveCounter += 1
+            if self?.autoSaveCounter ?? 0 >= 10 {
+                self?.autoSaveCounter = 0
+                self?.savePlaybackPosition()
+            }
         }
     }
 
@@ -817,11 +848,23 @@ class PlayerViewController: NSViewController {
         guard let player = player else { return }
         if player.rate > 0 {
             player.pause()
+            savePlaybackPosition()
         } else {
             player.play()
             player.rate = currentRate
         }
         updatePlayButton()
+    }
+
+    func startKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // 空格键 keyCode = 49
+            if event.keyCode == 49 {
+                self?.togglePlayPause()
+                return nil
+            }
+            return event
+        }
     }
 
     @objc func next() {
@@ -843,6 +886,7 @@ class PlayerViewController: NSViewController {
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600))
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.isUserSeeking = false
+            self?.savePlaybackPosition()
         }
     }
 
@@ -853,6 +897,7 @@ class PlayerViewController: NSViewController {
         let target = min(current + 10, total)
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         updateTimeLabel()
+        savePlaybackPosition()
     }
 
     @objc func rewind10() {
@@ -861,6 +906,7 @@ class PlayerViewController: NSViewController {
         let target = max(current - 10, 0)
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         updateTimeLabel()
+        savePlaybackPosition()
     }
 
     // MARK: - Speed Cycle
@@ -886,6 +932,10 @@ class PlayerViewController: NSViewController {
     }
 
     @objc func playerDidFinish() {
+        // 视频播放结束，清除保存的进度
+        if let url = currentVideoURL {
+            UserDefaults.standard.removeObject(forKey: "playback_\(url.path)")
+        }
         DispatchQueue.main.async { [weak self] in
             self?.onAdvance?()
         }
@@ -976,6 +1026,82 @@ class PlayerViewController: NSViewController {
             return String(format: "%d:%02d:%02d", h, m, s)
         }
         return String(format: "%02d:%02d", m, s)
+    }
+
+    // MARK: - Playback Memory
+
+    func savePlaybackPosition() {
+        guard let url = currentVideoURL, let player = player else { return }
+        let current = CMTimeGetSeconds(player.currentTime())
+        let total = CMTimeGetSeconds(player.currentItem?.duration ?? .zero)
+        // 跳过无效时长或已接近结尾的视频
+        guard total.isFinite, total > 0, current > 3, current < total - 5 else { return }
+        UserDefaults.standard.set(current, forKey: "playback_\(url.path)")
+    }
+
+    private func restorePlaybackPosition(for url: URL, item: AVPlayerItem) {
+        let key = "playback_\(url.path)"
+        guard let saved = UserDefaults.standard.object(forKey: key) as? Double, saved > 3 else { return }
+
+        // 用 KVO 等待播放器就绪后再 seek
+        statusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+            guard item.status == .readyToPlay else { return }
+            let total = CMTimeGetSeconds(item.duration)
+            // 确保保存的位置不超过视频总时长
+            guard total.isFinite, total > 0, saved < total - 5 else {
+                UserDefaults.standard.removeObject(forKey: key)
+                return
+            }
+            DispatchQueue.main.async {
+                self?.player?.seek(to: CMTime(seconds: saved, preferredTimescale: 600))
+                self?.showToast("▶️ 已恢复到 \(self?.formatTime(saved) ?? "")")
+            }
+        }
+    }
+
+    private var toastLabel: NSTextField?
+
+    private func showToast(_ text: String) {
+        // 移除旧 toast
+        toastLabel?.removeFromSuperview()
+
+        let label = NSTextField(labelWithString: text)
+        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.textColor = .white
+        label.alignment = .center
+        label.backgroundColor = NSColor.black.withAlphaComponent(0.75)
+        label.isBezeled = false
+        label.wantsLayer = true
+        label.layer?.cornerRadius = 8
+        label.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.75).cgColor
+        label.sizeToFit()
+        // 加内边距
+        var frame = label.frame
+        frame.size.width += 24
+        frame.size.height += 12
+        label.frame = frame
+
+        // 居中显示
+        if let pv = view.window?.contentView {
+            label.frame.origin = NSPoint(
+                x: (pv.bounds.width - frame.width) / 2,
+                y: pv.bounds.height / 2
+            )
+            pv.addSubview(label)
+        }
+
+        toastLabel = label
+
+        // 1.5 秒后淡出移除
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.4
+                label.animator().alphaValue = 0
+            }, completionHandler: {
+                label.removeFromSuperview()
+                self?.toastLabel = nil
+            })
+        }
     }
 
     // MARK: - Transparent Background
