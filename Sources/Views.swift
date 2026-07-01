@@ -52,6 +52,14 @@ struct PlayerTheme {
     }
 }
 
+// MARK: - SortField
+
+enum SortField: Int {
+    case nameAsc = 0, nameDesc, dateAsc, dateDesc, sizeAsc, sizeDesc
+
+    var isAscending: Bool { return self == .nameAsc || self == .dateAsc || self == .sizeAsc }
+}
+
 // MARK: - ContentViewController (Split View: Playlist + Player)
 
 class ContentViewController: NSSplitViewController {
@@ -66,12 +74,18 @@ class ContentViewController: NSSplitViewController {
         playlistItem.canCollapse = true
         playlistItem.preferredThicknessFraction = 0.22
         playlistItem.minimumThickness = 160
-        playlistItem.maximumThickness = 400
+        playlistItem.maximumThickness = 800
+        playlistItem.holdingPriority = .init(260)
 
         let playerItem = NSSplitViewItem(viewController: playerVC)
+        playerItem.holdingPriority = .init(250)
 
         addSplitViewItem(playlistItem)
         addSplitViewItem(playerItem)
+
+        // Make divider visible and draggable
+        splitView.dividerStyle = .paneSplitter
+        splitView.isVertical = true
 
         // Connect playlist ↔ player
         playlistVC.onSelect = { [weak self] url, index in
@@ -187,6 +201,8 @@ class PlaylistViewController: NSViewController {
     ]
 
     private var currentTheme: PlayerTheme = .dark
+    private var sortButton: NSPopUpButton!
+    private var sortField: SortField = .nameAsc
 
     override func loadView() {
         let view = NSView()
@@ -216,6 +232,27 @@ class PlaylistViewController: NSViewController {
         openButton.layer?.cornerRadius = 8
         openButton.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.25).cgColor
         headerView.addSubview(openButton)
+
+        // Sort button
+        sortButton = NSPopUpButton()
+        sortButton.bezelStyle = .inline
+        sortButton.controlSize = .small
+        sortButton.font = .systemFont(ofSize: 11, weight: .medium)
+        sortButton.translatesAutoresizingMaskIntoConstraints = false
+        let sortMenu = NSMenu()
+        sortMenu.addItem(NSMenuItem(title: "Name ↑", action: #selector(sortChanged(_:)), keyEquivalent: ""))
+        sortMenu.addItem(NSMenuItem(title: "Name ↓", action: #selector(sortChanged(_:)), keyEquivalent: ""))
+        sortMenu.addItem(NSMenuItem.separator())
+        sortMenu.addItem(NSMenuItem(title: "Date ↑", action: #selector(sortChanged(_:)), keyEquivalent: ""))
+        sortMenu.addItem(NSMenuItem(title: "Date ↓", action: #selector(sortChanged(_:)), keyEquivalent: ""))
+        sortMenu.addItem(NSMenuItem.separator())
+        sortMenu.addItem(NSMenuItem(title: "Size ↑", action: #selector(sortChanged(_:)), keyEquivalent: ""))
+        sortMenu.addItem(NSMenuItem(title: "Size ↓", action: #selector(sortChanged(_:)), keyEquivalent: ""))
+        sortButton.menu = sortMenu
+        sortButton.selectItem(at: 0)
+        sortButton.target = self
+        sortButton.action = #selector(sortChanged(_:))
+        headerView.addSubview(sortButton)
 
         // Separator
         let separator = NSBox()
@@ -256,6 +293,9 @@ class PlaylistViewController: NSViewController {
 
             titleLabel.topAnchor.constraint(equalTo: headerView.topAnchor),
             titleLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
+
+            sortButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
+            sortButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
 
             openButton.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
             openButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
@@ -311,7 +351,7 @@ class PlaylistViewController: NSViewController {
                 }
             }
 
-            foundFiles.sort { $0.lastPathComponent < $1.lastPathComponent }
+            foundFiles.sort { self.sortFiles($0, $1) }
 
             DispatchQueue.main.async {
                 self.files = foundFiles
@@ -378,6 +418,60 @@ class PlaylistViewController: NSViewController {
         }
         tableView.reloadData()
     }
+
+    // MARK: - Sort
+
+    @objc func sortChanged(_ sender: NSPopUpButton) {
+        let idx = sender.indexOfSelectedItem
+        guard let field = SortField(rawValue: idx) else { return }
+        sortField = field
+        resortFiles()
+    }
+
+    private func resortFiles() {
+        guard !files.isEmpty else { return }
+        let currentURL = (currentIndex >= 0 && currentIndex < files.count) ? files[currentIndex] : nil
+        files.sort { sortFiles($0, $1) }
+        if let url = currentURL, let newIndex = files.firstIndex(of: url) {
+            currentIndex = newIndex
+        }
+        tableView.reloadData()
+    }
+
+    private func sortFiles(_ a: URL, _ b: URL) -> Bool {
+        switch sortField {
+        case .nameAsc:
+            return a.lastPathComponent < b.lastPathComponent
+        case .nameDesc:
+            return a.lastPathComponent > b.lastPathComponent
+        case .dateAsc:
+            let da = fileModDate(a), db = fileModDate(b)
+            return da < db
+        case .dateDesc:
+            let da = fileModDate(a), db = fileModDate(b)
+            return da > db
+        case .sizeAsc:
+            return fileSize(a) < fileSize(b)
+        case .sizeDesc:
+            return fileSize(a) > fileSize(b)
+        }
+    }
+
+    private func fileModDate(_ url: URL) -> Date {
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let date = attrs[.modificationDate] as? Date {
+            return date
+        }
+        return .distantPast
+    }
+
+    private func fileSize(_ url: URL) -> Int64 {
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+           let size = attrs[.size] as? Int64 {
+            return size
+        }
+        return 0
+    }
 }
 
 // MARK: - Playlist Table View DataSource & Delegate
@@ -397,6 +491,7 @@ extension PlaylistViewController: NSTableViewDataSource, NSTableViewDelegate {
         let filename = files[row].lastPathComponent
         let isCurrent = (row == currentIndex)
         cell.configure(index: row + 1, filename: filename, isCurrent: isCurrent, theme: currentTheme)
+        cell.toolTip = filename
 
         return cell
     }
